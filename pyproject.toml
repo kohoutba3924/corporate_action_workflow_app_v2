@@ -1,0 +1,40 @@
+[project]
+name = "corporate_action_workflow_app"
+version = "0.1.0"
+description = "A workflow engine application for processing corporate actions."
+requires-python = ">=3.10"
+readme = "README.md"
+authors = [
+    { name = "Brett" }
+]
+
+dependencies = [
+    "fastapi",
+    "uvicorn",
+    "httpx2"
+]
+
+[project.scripts]
+corp-action-app = "corporate_action_workflow_app.cli.main:main"
+
+
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.black]
+line-length = 88
+target-version = ["py310"]
+
+[tool.ruff]
+line-length = 88
+select = ["E", "F", "W", "I"]
+ignore = []
+exclude = ["tests"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
