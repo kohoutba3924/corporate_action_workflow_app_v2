@@ -1,103 +1,141 @@
+# src/corporate_action_workflow_app_v2/models/corporate_action.py
+
+from __future__ import annotations
+
 import uuid
-from dataclasses import dataclass, field
-from datetime import date
-from enum import Enum, auto
-from typing import Optional
+from datetime import datetime, timezone
+from typing import Any, ClassVar, Dict, Set
+
+from pydantic import BaseModel, Field, field_validator
+
+from .metadata import (
+    DividendMetadata,
+    MergerMetadata,
+    MetadataType,
+    SplitMetadata,
+)
+from .statuses import CorporateActionStatus
 
 
-# Create stable corporate action processing states
-class CorporateActionStatus(Enum):
-    RECEIVED = auto()
-    VALIDATED = auto()
-    PROCESSING = auto()
-    COMPLETED = auto()
-    FAILED = auto()
+# ---------------------------------------------------------
+# Metadata factory using discriminator
+# ---------------------------------------------------------
+def parse_metadata(data: Dict[str, Any]) -> MetadataType:
+    """
+    Deserialize metadata using the discriminator field `metadata_type`.
+    """
+    metadata_type = data.get("metadata_type")
+
+    if metadata_type == "DIVIDEND":
+        return MetadataType(root=DividendMetadata.model_validate(data))
+    elif metadata_type == "SPLIT":
+        return MetadataType(root=SplitMetadata.model_validate(data))
+    elif metadata_type == "MERGER":
+        return MetadataType(root=MergerMetadata.model_validate(data))
+
+    raise ValueError(
+        f"Unknown metadata_type '{metadata_type}'. "
+        "Expected one of: DIVIDEND, SPLIT, MERGER."
+    )
 
 
-# Create the corporate action class datatype definition
-@dataclass
-class CorporateAction:
-    action_id: str = field(default_factory=lambda: str(uuid.uuid4()))
-    action_type: str = ""  # e.g., "DIVIDEND", "SPLIT", "MERGER"
-    record_date: Optional[date] = None
-    payable_date: Optional[date] = None
+class CorporateAction(BaseModel):
+    """
+    Core domain model for a corporate action & domain level validation.
+    """
+
+    action_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    action_type: str
+    metadata: MetadataType
     status: CorporateActionStatus = CorporateActionStatus.RECEIVED
-    metadata: dict = field(default_factory=dict)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
-    # Methods for setting and transitioning state
-    def mark_validated(self):
+    # Allowed corporate action types (domain rule)
+    ALLOWED_ACTION_TYPES: ClassVar[Set[str]] = {"DIVIDEND", "MERGER", "SPLIT"}
+
+    # ---------------------------------------------------------
+    # Status transitions
+    # ---------------------------------------------------------
+    def _touch(self) -> None:
+        self.updated_at = datetime.now(timezone.utc)
+
+    def mark_validated(self) -> None:
         self.status = CorporateActionStatus.VALIDATED
+        self._touch()
 
-    def mark_processing(self):
+    def mark_processing(self) -> None:
         self.status = CorporateActionStatus.PROCESSING
+        self._touch()
 
-    def mark_completed(self):
+    def mark_completed(self) -> None:
         self.status = CorporateActionStatus.COMPLETED
+        self._touch()
 
-    def mark_failed(self):
+    def mark_failed(self) -> None:
         self.status = CorporateActionStatus.FAILED
+        self._touch()
 
-    # Allowed corporate action types
-    ALLOWED_ACTION_TYPES = {"DIVIDEND", "SPLIT", "MERGER"}
+    def mark_dead_letter(self) -> None:
+        self.status = CorporateActionStatus.DEAD_LETTER
+        self._touch()
 
-    # Methods to enforce data domain business rules
-    def validate(self):
-        """Validate the corporate action before processing."""
-        self._validate_action_type()
-        self._validate_dates()
-        self._validate_metadata()
+    def mark_retry_pending(self) -> None:
+        self.status = CorporateActionStatus.RETRY_PENDING
+        self._touch()
 
-    def _validate_action_type(self):
-        if not self.action_type:
+    # ---------------------------------------------------------
+    # Domain validation
+    # ---------------------------------------------------------
+    @field_validator("action_type")
+    def validate_action_type(cls, v: str) -> str:
+        if not v:
             raise ValueError("action_type is required")
 
-        if self.action_type.upper() not in self.ALLOWED_ACTION_TYPES:
-            allowed = ", ".join(self.ALLOWED_ACTION_TYPES)
+        if v.upper() not in cls.ALLOWED_ACTION_TYPES:
+            allowed = ", ".join(cls.ALLOWED_ACTION_TYPES)
+            raise ValueError(f"Invalid action_type '{v}'. Allowed types: {allowed}")
+        return v
+
+    @field_validator("metadata", mode="after")
+    def ensure_action_type_matches_metadata(cls, v, info):
+        action_type = info.data.get("action_type")
+        if action_type is None:
+            return v
+
+        # Normalize action_type for comparison
+        action_type = action_type.upper()
+
+        # Extract metadata_type from the root model
+        metadata_type = v.root.metadata_type
+
+        if action_type != metadata_type:
             raise ValueError(
-                f"Invalid action_type '{self.action_type}'. Allowed types: {allowed}"
+                f"action_type '{action_type}' does not match metadata.metadata_type '{metadata_type}'"
             )
 
-    def _validate_dates(self):
-        # If both dates are provided, payable_date must be >= record_date
-        if self.record_date and self.payable_date:
-            if self.payable_date < self.record_date:
-                raise ValueError("payable_date cannot be earlier than record_date")
+        return v
 
-    def _validate_metadata(self):
-        if not isinstance(self.metadata, dict):
-            raise ValueError("metadata must be a dictionary")
-
-        # Example rule: dividends require an 'amount'
-        if self.action_type.upper() == "DIVIDEND":
-            if "amount" not in self.metadata:
-                raise ValueError("DIVIDEND actions require metadata['amount']")
-
-    # Methods to faciliate persistance
-    def to_dict(self):
+    # ---------------------------------------------------------
+    # Serialization / Deserialization
+    # ---------------------------------------------------------
+    def to_dict(self) -> Dict[str, Any]:
         return {
             "action_id": self.action_id,
             "action_type": self.action_type,
-            "record_date": self.record_date.isoformat() if self.record_date else None,
-            "payable_date": (
-                self.payable_date.isoformat() if self.payable_date else None
-            ),
+            "metadata": self.metadata.model_dump(mode="json"),
             "status": self.status.name,
-            "metadata": self.metadata,
+            "created_at": self.created_at.isoformat(),
+            "updated_at": self.updated_at.isoformat(),
         }
 
     @classmethod
-    def from_dict(cls, data: dict):
+    def from_dict(cls, data: Dict[str, Any]) -> "CorporateAction":
         return cls(
             action_id=data["action_id"],
             action_type=data["action_type"],
-            record_date=(
-                date.fromisoformat(data["record_date"]) if data["record_date"] else None
-            ),
-            payable_date=(
-                date.fromisoformat(data["payable_date"])
-                if data["payable_date"]
-                else None
-            ),
-            metadata=data.get("metadata", {}),
+            metadata=parse_metadata(data["metadata"]),
             status=CorporateActionStatus[data["status"]],
+            created_at=datetime.fromisoformat(data["created_at"]),
+            updated_at=datetime.fromisoformat(data["updated_at"]),
         )
