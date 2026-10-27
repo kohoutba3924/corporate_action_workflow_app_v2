@@ -1,5 +1,5 @@
 import pytest
-from datetime import datetime, timezone, date
+from datetime import datetime, date
 
 from corporate_action_workflow_app_v2.models.corporate_actions import (
     CorporateAction,
@@ -31,10 +31,12 @@ class TestCorporateActionConstruction:
             )
         )
         ca = CorporateAction(action_type="DIVIDEND", metadata=md)
+
         assert ca.action_type == "DIVIDEND"
         assert isinstance(ca.metadata, MetadataType)
         assert isinstance(ca.metadata.root, DividendMetadata)
         assert ca.status == CorporateActionStatus.RECEIVED
+        assert ca.retry_count == 0
         assert isinstance(ca.action_id, str)
         assert isinstance(ca.created_at, datetime)
         assert isinstance(ca.updated_at, datetime)
@@ -49,6 +51,7 @@ class TestCorporateActionConstruction:
             )
         )
         ca = CorporateAction(action_type="SPLIT", metadata=md)
+
         assert isinstance(ca.metadata.root, SplitMetadata)
 
     def test_construct_merger_action(self):
@@ -63,7 +66,71 @@ class TestCorporateActionConstruction:
             )
         )
         ca = CorporateAction(action_type="MERGER", metadata=md)
+
         assert isinstance(ca.metadata.root, MergerMetadata)
+
+    def test_retry_count_defaults_to_zero(self):
+        md = MetadataType(
+            root=DividendMetadata(
+                amount=10,
+                currency="USD",
+                declaration_date=date(2024, 1, 1),
+                record_date=date(2024, 1, 2),
+                payable_date=date(2024, 1, 3),
+            )
+        )
+
+        ca = CorporateAction(
+            action_type="DIVIDEND",
+            metadata=md,
+        )
+
+        assert ca.retry_count == 0
+
+
+# =========================================================
+# Retry Count Tests
+# =========================================================
+
+
+class TestRetryCount:
+
+    def test_retry_count_can_be_set(self):
+        md = MetadataType(
+            root=DividendMetadata(
+                amount=10,
+                currency="USD",
+                declaration_date=date(2024, 1, 1),
+                record_date=date(2024, 1, 2),
+                payable_date=date(2024, 1, 3),
+            )
+        )
+
+        ca = CorporateAction(
+            action_type="DIVIDEND",
+            metadata=md,
+            retry_count=2,
+        )
+
+        assert ca.retry_count == 2
+
+    def test_negative_retry_count_rejected(self):
+        md = MetadataType(
+            root=DividendMetadata(
+                amount=10,
+                currency="USD",
+                declaration_date=date(2024, 1, 1),
+                record_date=date(2024, 1, 2),
+                payable_date=date(2024, 1, 3),
+            )
+        )
+
+        with pytest.raises(ValueError):
+            CorporateAction(
+                action_type="DIVIDEND",
+                metadata=md,
+                retry_count=-1,
+            )
 
 
 # =========================================================
@@ -74,7 +141,6 @@ class TestCorporateActionConstruction:
 class TestActionTypeValidation:
 
     def test_valid_action_types(self):
-        # DIVIDEND
         md_div = MetadataType(
             root=DividendMetadata(
                 amount=10,
@@ -87,7 +153,6 @@ class TestActionTypeValidation:
         ca = CorporateAction(action_type="DIVIDEND", metadata=md_div)
         assert ca.action_type == "DIVIDEND"
 
-        # MERGER
         md_merger = MetadataType(
             root=MergerMetadata(
                 acquiring_company="A",
@@ -101,7 +166,6 @@ class TestActionTypeValidation:
         ca = CorporateAction(action_type="MERGER", metadata=md_merger)
         assert ca.action_type == "MERGER"
 
-        # SPLIT
         md_split = MetadataType(
             root=SplitMetadata(
                 split_ratio="2:1",
@@ -123,7 +187,9 @@ class TestActionTypeValidation:
                 payable_date=date(2024, 1, 3),
             )
         )
+
         ca = CorporateAction(action_type="dividend", metadata=md)
+
         assert ca.action_type == "dividend"
 
     def test_invalid_action_type(self):
@@ -136,6 +202,7 @@ class TestActionTypeValidation:
                 payable_date=date(2024, 1, 3),
             )
         )
+
         with pytest.raises(ValueError):
             CorporateAction(action_type="BONUS", metadata=md)
 
@@ -149,6 +216,7 @@ class TestActionTypeValidation:
                 payable_date=date(2024, 1, 3),
             )
         )
+
         with pytest.raises(ValueError):
             CorporateAction(action_type="", metadata=md)
 
@@ -170,7 +238,9 @@ class TestMetadataIntegration:
                 payable_date=date(2024, 1, 3),
             )
         )
+
         ca = CorporateAction(action_type="DIVIDEND", metadata=md)
+
         assert isinstance(ca.metadata.root, DividendMetadata)
 
 
@@ -191,11 +261,12 @@ class TestActionTypeMetadataAlignment:
                 payable_date=date(2024, 1, 3),
             )
         )
+
         ca = CorporateAction(action_type="DIVIDEND", metadata=md)
+
         assert isinstance(ca, CorporateAction)
 
     def test_mismatched_action_type_and_metadata_type_raises(self):
-        # Dividend metadata but MERGER action_type
         md = MetadataType(
             root=DividendMetadata(
                 amount=10,
@@ -205,6 +276,7 @@ class TestActionTypeMetadataAlignment:
                 payable_date=date(2024, 1, 3),
             )
         )
+
         with pytest.raises(ValueError):
             CorporateAction(action_type="MERGER", metadata=md)
 
@@ -217,6 +289,7 @@ class TestActionTypeMetadataAlignment:
                 fractional_shares_policy="ROUND_UP",
             )
         )
+
         with pytest.raises(ValueError):
             CorporateAction(action_type="DIVIDEND", metadata=md)
 
@@ -231,6 +304,7 @@ class TestActionTypeMetadataAlignment:
                 exchange_ratio=1.5,
             )
         )
+
         with pytest.raises(ValueError):
             CorporateAction(action_type="SPLIT", metadata=md)
 
@@ -251,7 +325,9 @@ class TestParseMetadata:
             "record_date": "2024-01-02",
             "payable_date": "2024-01-03",
         }
+
         md = parse_metadata(data)
+
         assert isinstance(md.root, DividendMetadata)
 
     def test_parse_split(self):
@@ -262,7 +338,9 @@ class TestParseMetadata:
             "effective_date": "2024-01-02",
             "fractional_shares_policy": "ROUND_UP",
         }
+
         md = parse_metadata(data)
+
         assert isinstance(md.root, SplitMetadata)
 
     def test_parse_merger(self):
@@ -275,7 +353,9 @@ class TestParseMetadata:
             "effective_date": "2024-01-02",
             "exchange_ratio": 1.5,
         }
+
         md = parse_metadata(data)
+
         assert isinstance(md.root, MergerMetadata)
 
     def test_parse_invalid_metadata_type(self):
@@ -300,7 +380,13 @@ class TestSerialization:
                 payable_date=date(2024, 1, 3),
             )
         )
-        ca = CorporateAction(action_type="DIVIDEND", metadata=md)
+
+        ca = CorporateAction(
+            action_type="DIVIDEND",
+            metadata=md,
+            retry_count=2,
+        )
+
         d = ca.to_dict()
 
         restored = CorporateAction.from_dict(d)
@@ -309,8 +395,30 @@ class TestSerialization:
         assert restored.action_type == ca.action_type
         assert isinstance(restored.metadata.root, DividendMetadata)
         assert restored.status == ca.status
+        assert restored.retry_count == ca.retry_count
         assert restored.created_at == ca.created_at
         assert restored.updated_at == ca.updated_at
+
+    def test_retry_count_serialized(self):
+        md = MetadataType(
+            root=DividendMetadata(
+                amount=10,
+                currency="USD",
+                declaration_date=date(2024, 1, 1),
+                record_date=date(2024, 1, 2),
+                payable_date=date(2024, 1, 3),
+            )
+        )
+
+        ca = CorporateAction(
+            action_type="DIVIDEND",
+            metadata=md,
+            retry_count=2,
+        )
+
+        d = ca.to_dict()
+
+        assert d["retry_count"] == 2
 
 
 # =========================================================
@@ -330,46 +438,59 @@ class TestStatusTransitions:
                 payable_date=date(2024, 1, 3),
             )
         )
+
         return CorporateAction(action_type="DIVIDEND", metadata=md)
 
     def test_mark_validated(self):
         ca = self._make_action()
         old = ca.updated_at
+
         ca.mark_validated()
+
         assert ca.status == CorporateActionStatus.VALIDATED
         assert ca.updated_at > old
 
     def test_mark_processing(self):
         ca = self._make_action()
         old = ca.updated_at
+
         ca.mark_processing()
+
         assert ca.status == CorporateActionStatus.PROCESSING
         assert ca.updated_at > old
 
     def test_mark_completed(self):
         ca = self._make_action()
         old = ca.updated_at
+
         ca.mark_completed()
+
         assert ca.status == CorporateActionStatus.COMPLETED
         assert ca.updated_at > old
 
     def test_mark_failed(self):
         ca = self._make_action()
         old = ca.updated_at
+
         ca.mark_failed()
+
         assert ca.status == CorporateActionStatus.FAILED
         assert ca.updated_at > old
 
     def test_mark_dead_letter(self):
         ca = self._make_action()
         old = ca.updated_at
+
         ca.mark_dead_letter()
+
         assert ca.status == CorporateActionStatus.DEAD_LETTER
         assert ca.updated_at > old
 
     def test_mark_retry_pending(self):
         ca = self._make_action()
         old = ca.updated_at
+
         ca.mark_retry_pending()
+
         assert ca.status == CorporateActionStatus.RETRY_PENDING
         assert ca.updated_at > old

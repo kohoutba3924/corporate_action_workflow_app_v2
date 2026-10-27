@@ -233,6 +233,25 @@ class TestPublicAPI:
         assert ctx.log is None
         assert ctx.introspection is None
 
+    def test_retry_count_persisted(self, tmp_path):
+        store_path = tmp_path / "actions.json"
+        store = JsonStore(str(store_path))
+
+        action = make_action()
+        action.retry_count = 2
+
+        save_ctx = store.save_all([action])
+
+        assert save_ctx.error is None
+
+        load_ctx = store.load_all()
+
+        assert load_ctx.error is None
+
+        loaded_action = load_ctx.payload[0]
+
+        assert loaded_action.retry_count == 2
+
 
 # =========================================================
 # End-to-End Persistence Tests
@@ -246,6 +265,7 @@ class TestPersistenceRoundTrip:
         store = JsonStore(str(store_path))
 
         action = make_action()
+        action.retry_count = 2
 
         save_ctx = store.save_all([action])
         assert save_ctx.error is None
@@ -256,6 +276,7 @@ class TestPersistenceRoundTrip:
         loaded_action = load_ctx.payload[0]
 
         assert loaded_action.action_id == action.action_id
+        assert loaded_action.retry_count == action.retry_count
 
         loaded_action.mark_completed()
 
@@ -267,6 +288,7 @@ class TestPersistenceRoundTrip:
         final_action = final_ctx.payload[0]
 
         assert final_action.action_id == action.action_id
+        assert final_action.retry_count == action.retry_count
         assert final_action.status == CorporateActionStatus.COMPLETED
         assert (
             final_action.metadata.root.metadata_type

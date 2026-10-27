@@ -48,15 +48,24 @@ class CorporateAction(BaseModel):
     action_type: str
     metadata: MetadataType
     status: CorporateActionStatus = CorporateActionStatus.RECEIVED
+
+    # Workflow governance state
+    retry_count: int = Field(default=0, ge=0)
+
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     # Allowed corporate action types (domain rule)
-    ALLOWED_ACTION_TYPES: ClassVar[Set[str]] = {"DIVIDEND", "MERGER", "SPLIT"}
+    ALLOWED_ACTION_TYPES: ClassVar[Set[str]] = {
+        "DIVIDEND",
+        "MERGER",
+        "SPLIT",
+    }
 
     # ---------------------------------------------------------
     # Status transitions
     # ---------------------------------------------------------
+
     def _touch(self) -> None:
         self.updated_at = datetime.now(timezone.utc)
 
@@ -87,6 +96,7 @@ class CorporateAction(BaseModel):
     # ---------------------------------------------------------
     # Domain validation
     # ---------------------------------------------------------
+
     @field_validator("action_type")
     def validate_action_type(cls, v: str) -> str:
         if not v:
@@ -95,11 +105,13 @@ class CorporateAction(BaseModel):
         if v.upper() not in cls.ALLOWED_ACTION_TYPES:
             allowed = ", ".join(cls.ALLOWED_ACTION_TYPES)
             raise ValueError(f"Invalid action_type '{v}'. Allowed types: {allowed}")
+
         return v
 
     @field_validator("metadata", mode="after")
     def ensure_action_type_matches_metadata(cls, v, info):
         action_type = info.data.get("action_type")
+
         if action_type is None:
             return v
 
@@ -111,7 +123,9 @@ class CorporateAction(BaseModel):
 
         if action_type != metadata_type:
             raise ValueError(
-                f"action_type '{action_type}' does not match metadata.metadata_type '{metadata_type}'"
+                f"action_type '{action_type}' "
+                f"does not match metadata.metadata_type "
+                f"'{metadata_type}'"
             )
 
         return v
@@ -119,12 +133,14 @@ class CorporateAction(BaseModel):
     # ---------------------------------------------------------
     # Serialization / Deserialization
     # ---------------------------------------------------------
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "action_id": self.action_id,
             "action_type": self.action_type,
             "metadata": self.metadata.model_dump(mode="json"),
             "status": self.status.name,
+            "retry_count": self.retry_count,
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
         }
@@ -136,6 +152,7 @@ class CorporateAction(BaseModel):
             action_type=data["action_type"],
             metadata=parse_metadata(data["metadata"]),
             status=CorporateActionStatus[data["status"]],
+            retry_count=data["retry_count"],
             created_at=datetime.fromisoformat(data["created_at"]),
             updated_at=datetime.fromisoformat(data["updated_at"]),
         )
