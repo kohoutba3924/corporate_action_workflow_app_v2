@@ -1,47 +1,54 @@
 # src/corporate_action_workflow_app_v2/validation/validation_errors.py
 
 
-class DomainError(Exception):
+class ValidationError(Exception):
     """
-    Base class for all domain-level validation errors.
-    These errors represent semantic issues, not structural ones.
+    Base class for validation-layer governance failures.
+
+    Domain model validation is handled by the domain models
+    themselves. These exceptions represent workflow and policy
+    validation failures.
     """
 
     pass
 
 
-class MetadataValidationError(DomainError):
+class BusinessRuleValidationError(ValidationError):
     """
-    Raised when metadata is structurally valid (Pydantic) but semantically invalid.
-    Example: dividend_type is valid literal but violates a business rule.
-    """
+    Raised when an action violates an approved workflow policy
+    or business rule.
 
-    def __init__(self, field: str, message: str, action_type: str):
-        super().__init__(message)
-        self.field = field
-        self.message = message
-        self.action_type = action_type
+    Examples:
 
-
-class BusinessRuleValidationError(DomainError):
-    """
-    Raised when a corporate action violates a business rule.
-    Example: split ratio is valid but violates a corporate policy.
+    - Processor admission denied
+    - Retry threshold exceeded
+    - Readiness validation failure
     """
 
-    def __init__(self, message: str, action_type: str):
+    def __init__(self, message: str):
         super().__init__(message)
         self.message = message
-        self.action_type = action_type
 
 
-class WorkflowValidationError(DomainError):
+class WorkflowValidationError(ValidationError):
     """
-    Raised when a corporate action cannot proceed in the workflow.
-    Example: attempting to process an action that is still in RECEIVED status.
+    Raised when an invalid workflow state transition is attempted.
+
+    Examples:
+
+    - RECEIVED -> PROCESSING
+    - COMPLETED -> PROCESSING
+    - DEAD_LETTER -> VALIDATED
     """
 
-    def __init__(self, message: str, current_status: str):
+    def __init__(
+        self,
+        message: str,
+        current_status: str,
+        target_status: str,
+    ):
         super().__init__(message)
+
         self.message = message
         self.current_status = current_status
+        self.target_status = target_status
